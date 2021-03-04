@@ -1,0 +1,374 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local OTA</title>
+<script type="text/javascript" src="js/jquery.min.js"></script>
+<script type="text/javascript" src="js/scripts.js"></script>
+<link rel="stylesheet" type="text/css" href="css/style.css">
+
+
+<script type="text/javascript">
+var currentVer = "";
+$(document).ready(function() {
+	
+	getDeviceStatus();	
+	
+// OTA
+	$("#updateSWButton").click(function(){
+		$("#softWareStatus").hide(500);
+		$("#uploadProgress").show(500);
+	});
+	$("#removeFile").click(function(){
+		$("#putfile").val("");
+		$("#dataFile").hide(500);
+		$("#uploadFile").hide(500);
+		$("#chooseFile").show(500);
+	});
+	$( "#chooseFile" ).click(function() {
+		$(".sameFile").hide();
+	 	$("#putfile").trigger('click')
+	});
+	$("#putfile").change(function(){
+		
+		var file = this.value;
+		var fileName = file.split("\\");
+		
+		$("#dataFile").show(500);
+		$("#choosenFile").text(fileName[fileName.length-1]);
+		$("#chooseFile").hide(500);
+		if(currentVer != fileName[fileName.length-1].substring(0,14)){
+			
+			$("#uploadFile").show(500);
+		} else {
+			
+			$(".sameFile").show(500);
+		}
+			
+
+		
+	});
+	
+	$( "#uploadFile" ).click(function() {
+		$("#progressEnd").hide();
+		$("#uploadFile").hide(500);
+		$("#dataFile").hide(500);
+		$("#progressBarUpload").show(500);
+		startUpload();
+	});
+	$( "#progressEnd" ).click(function() {
+		window.location.href = "ota.html";
+	});
+	
+	getOtaVersion();
+});
+
+
+
+function ajaxCall(uri, method, qdata, callback, nextFunc) {
+	$.ajax({
+		url: uri,
+		type: method,
+		data: qdata,
+		cache: true,
+		dataType:'text',
+		success: function(data) {
+			callback(data);
+		},
+		error: function(e) {
+		},
+		complete: function (e){
+			if($.isFunction(nextFunc)){
+				nextFunc();
+			}
+		}
+	});
+}
+
+// getDeviceStatus
+
+function getDeviceStatus(){
+	ajaxCall('/device', "GET", "macaddress&ipaddress&ssid", respDeviceStatus);
+}
+function respDeviceStatus(dr){
+	var data = dr;
+	var characters = data.split("&");	
+	for (var i=0; i < characters.length; i++)
+	{
+		var values = characters[i].split("=");
+		$("#"+values[0]).text(values[1]);
+		if(values[0] == "macaddress") {
+			// $("#cloudLink").text(values[1]);
+		}					
+	}
+}
+
+
+
+// get Ota Version
+
+function getOtaVersion(){
+	ajaxCall('ota', "GET", "version", respOta, getOtaPhase);
+}
+function getOtaPhase(){
+	// ajaxCall('ota', "GET", "phase", respOta);
+}
+
+function respOta(dr){
+	var data = dr;
+	var characters = data.split("&");	
+	for (var i=0; i < characters.length; i++)
+	{
+		var values = characters[i].split("=");
+		if(currentVer == ""){
+			console.log("first time check ota version");
+			$("#"+values[0]).text(values[1]);
+			currentVer = values[1].substring(0,14);
+		} else {
+			
+			console.log("second time check ota version");
+			if($("#choosenFile").text().substring(0,14) == values[1].substring(0,14)){
+				console.log("proccess completed");
+				processCompleted();
+			} else {
+				console.log("proccess failed");
+				processFaild();
+			}
+		}
+	}
+}
+
+
+function wait15andcheck (){
+	console.log("wait15andcheck()...");
+	$(".afterProgressCompleted").show(500);
+	var wait15 = setTimeout(getOtaVersion, 15000);
+}
+
+function processCompleted(){
+	$(".successToUpdate").show(500);
+	$("#progressEnd").show(500);
+	
+}
+function processFaild(){
+	$(".faildToUpdate").show(500);
+}
+
+//// upload file ///////
+
+// var funcExec;
+// var otaGetIpExec;
+
+var otaReportExec;
+var otaProgressInvoke;
+var deviceIpAddr;
+
+
+
+
+function startUpload(){
+	ajaxCall('device', "GET", "ipaddress", respIPAdress);
+}
+
+function respIPAdress(dr) {
+	
+	deviceIpAddr = dr;
+	var values = deviceIpAddr.split("=");
+	deviceIpAddr = values[1];
+		
+    if(typeof(deviceIpAddr) === 'undefined') {
+		getDeviceIpAddress();
+    } else {
+		otaPut();
+    }
+}
+
+
+function otaPut() {
+    h = new XMLHttpRequest();
+	
+    h.onreadystatechange = function(h) {
+        return function() {
+            if ((h.readyState == 4) && ((h.status == 200) || (h.status == 204))) {
+            }
+        }
+    } (h);
+	
+	var put_uri = "ota?filename="+$("#choosenFile").text();
+	var file = document.getElementById("putfile").files[0];
+	// var file = $("#upFile").val();
+	
+    h.open("PUT", put_uri, true);
+    h.send(file);
+	
+	otaProgressInvoke = 1;
+	periodicOtaReportUpdate();
+}
+
+var timeOutProgress;
+var xmlHttpTimeout;
+function getOtaProgress() {
+
+	if (otaProgressInvoke == 1)
+	{
+		otaProgressInvoke = 0;
+		h = new XMLHttpRequest();
+		h.onreadystatechange = function(h) {
+			return function() {
+				if ((h.readyState == 4) && ((h.status == 200) || (h.status == 204))) {
+					clearTimeout(xmlHttpTimeout); 
+					var data = h.response;
+					
+					if(data == "") {
+						
+					}
+					
+					otaProgressInvoke = 1;
+					
+					if(data == "fail"){
+						clearTimeout(xmlHttpTimeout);
+						clearTimeout(otaReportExec);
+						console.log("fail");
+						$(".wrong").show(500);
+					} else {
+						xmlHttpTimeout=setTimeout(ajaxTimeout, 30000);
+						
+						$("#progressPrecent").text(data);
+						$("#progressBar").val(data);
+						if (data == '100'){
+							clearTimeout(xmlHttpTimeout);
+							clearTimeout(otaReportExec);
+							console.log("100%");
+							wait15andcheck();
+							 // check if the file if uploaded successfuly
+							// $("#progressEnd").show(500);
+						}
+					}
+				}
+			}
+		} (h);
+		h.open("GET", "https://"+deviceIpAddr+":5432", true);
+		h.send();
+	}
+}
+
+function periodicOtaReportUpdate() {
+	xmlHttpTimeout=setTimeout(ajaxTimeout, 30000);	
+	otaReportExec = setInterval(getOtaProgress, 100);
+}
+
+function ajaxTimeout(){
+	wait15andcheck(); // check if the proccess is completed successfuly
+}
+
+
+</script>
+<style>
+body  {
+	background-color:#fff;
+}
+.wrong {
+	font-size:16px;
+	color:#cc0000;
+	font-weight:bold;
+	display:none;
+}
+.faildToUpdate {
+	font-size:16px;
+	color:#cc0000;
+	font-weight:bold;
+	display:none;
+}
+.successToUpdate {
+	font-size:16px;
+	color:#0C0;
+	font-weight:bold;
+	display:none;
+}
+.afterProgressCompleted {
+	display:none;
+}
+.sameFile {
+	display:none;
+	margin-top:10px;
+	font-size:12px;
+	color:#cc0000;
+}
+</style>
+</head>
+
+<body>
+<div id="popUpcontainer"></div>
+<div id="wrapPopBox"><div id="popUpcontainerBoxIn">
+	<a id="popUpcontainerClose">X</a>	
+	<div id="popUpcontentBox"></div>
+</div>
+</div>
+<!-- wrapper -->
+<div class="wrapper">
+    <nav class="tmenuNav">
+        <ul class="mMenu">
+            <li><a href="ota.html">OTA</a></li>
+            <li><a href="settings.html">Settings</a></li>
+        </ul>
+    </nav>
+    <div class="headerIn"><div class="menuTop"></div><h1>Local OTA</h1></div>
+	<div class="headerInSub"><div id="wireless" class="wirelessFullSignal"></div><a href="help.html" id="help"></a><div class="subTitle">OTA</div></div>
+    <div class="demoMain">
+	<fieldset class="wrapSection">
+            <legend>Device info</legend>
+            <div class="dataFS">SSID: <span class="inWrapSec" id="ssid"></span></div>
+            <div class="dataFS">MAC Address: <span class="inWrapSec" id="macaddress"></span></div>
+            <div class="dataFS">IP Address: <span class="inWrapSec" id="ipaddress"></span></div>
+        </fieldset>
+    <form method="PUT"  action="putfile" enctype="multipart/form-data">
+        <fieldset class="wrapSection" id="softWareStatus">
+            <legend>Software Status</legend>
+            <div class="dataFS">Current SW Version: <span id="version"></span></div>
+            <!--<div class="dataFS">New SW Version: <span id="phase"></span></div>-->
+            <div class="regButton" id="updateSWButton">Update</div>
+        </fieldset>
+        
+        <fieldset class="wrapSection" id="uploadProgress">
+            <legend>Upload Progress</legend>
+           <div class="regButton" id="chooseFile">Choose file</div>
+            <div id="dataFile">
+            	<div id="choosenFile"></div><div id="removeFile">remove</div>
+                <div class="clear"></div>
+                <div class="sameFile">The choosen file is updated already</div>
+            </div>
+            <div class="regButton" id="uploadFile">Upload file</div>
+            <div id="progressBarUpload">
+            	<div class="inProgressText">Upload in progress <span id="progressPrecent">0</span>%</div>
+            	<progress id="progressBar" value="0" max="100"></progress>
+                
+                <ul>
+                	<li>Uploading new SW package</li>
+                	<li>Extracting archive file</li>
+                	<li>Writing to serial flash</li>
+                </ul>
+                <ul class="afterProgressCompleted">
+                	<li>Rebooting...</li>
+                	<li>Testing new SW package</li>
+                	<li>waiting...</li>
+                </ul>
+                <div class="wrong">OTA Update failed</div>
+                <div class="successToUpdate">CC32xx is successfully updated</div>
+                <div class="faildToUpdate">CC32xx failed to update</div>
+                <div id="progressEnd" class="regButton">Finalize</div>
+            </div>
+        </fieldset>
+        <input id="putfile" type="file" name="filename" >
+   	</form>
+    </div>
+    
+    
+   
+<!--end wrapper -->
+</div>
+<div class="clear"></div>
+
+
+</body>
+</html>
